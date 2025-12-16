@@ -20,7 +20,7 @@ def rollDice(word, markovModel, weights):
             return i
         else:
             dice -= currWeight
-    # Fallback: return a random word from the options
+    # Faalback: return a random word from the options
     return random.choice(list(markovModel[word].keys()))
 
 # Decide which word to pick from starter model given weights of all starter words.

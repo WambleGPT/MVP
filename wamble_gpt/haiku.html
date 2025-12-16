@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Haiku Generator</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: Georgia, serif;
+      background-color: #f5f5f5;
+      color: #000;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 50px auto;
+      padding: 20px;
+    }
+    
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      color: #000;
+    }
+    
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 0.9rem;
+    }
+    
+    .corpus-section {
+      margin-bottom: 40px;
+      padding: 20px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background-color: #fafafa;
+    }
+    
+    .corpus-section h2 {
+      font-size: 1.2rem;
+      margin-bottom: 15px;
+      color: #000;
+    }
+    
+    .corpus-section input[type="file"] {
+      margin-bottom: 10px;
+      display: block;
+    }
+    
+    .corpus-section textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: vertical;
+    }
+    
+    .haiku-box {
+      position: relative;
+      border: 2px solid #333;
+      border-radius: 8px;
+      padding: 30px;
+      background-color: #fff;
+    }
+    
+    .line-wrapper {
+      margin-bottom: 15px;
+      position: relative;
+      cursor: text;
+    }
+    
+    .line-wrapper:last-of-type {
+      margin-bottom: 25px;
+    }
+    
+    .text-layer {
+      font-size: 1.5rem;
+      line-height: 2rem;
+      font-family: Georgia, serif;
+      min-height: 2rem;
+      position: relative;
+      padding: 2px 0;
+      pointer-events: none;
+    }
+    
+    .user-text {
+      color: #000;
+    }
+    
+    .ghost-text {
+      color: #999;
+    }
+    
+    .line-input {
+      position: absolute;
+      top: 2px;
+      left: 0;
+      width: 100%;
+      font-size: 1.5rem;
+      line-height: 2rem;
+      font-family: Georgia, serif;
+      border: none;
+      outline: none;
+      background: transparent;
+      color: transparent;
+      caret-color: #000;
+      padding: 0;
+      z-index: 10;
+    }
+    
+    .line-input:focus {
+      color: transparent;
+      caret-color: #000;
+    }
+    
+    .syllable-info {
+      font-size: 0.75rem;
+      margin-top: 3px;
+      color: #666;
+    }
+    
+    .syllable-info.complete {
+      color: #059669;
+    }
+    
+    .syllable-info.over {
+      color: #dc2626;
+    }
+    
+    .instructions {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #f9f9f9;
+      border-left: 3px solid #333;
+      font-size: 0.85rem;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useRef } = React;
+
+    // Simple syllable counter
+    function syllable(word) {
+      if (!word || word.length === 0) return 0;
+      
+      word = word.toLowerCase().trim();
+      word = word.replace(/[^a-z']/g, '');
+      
+      if (word.length <= 3) return 1;
+      
+      word = word.replace(/(?:[^laeiouy]es|ed|[^laeiouy]e)$/, '');
+      word = word.replace(/^y/, '');
+      
+      const vowelGroups = word.match(/[aeiouy]+/g);
+      let syllables = vowelGroups ? vowelGroups.length : 0;
+      
+      if (word.endsWith('le') && word.length > 2 && !/[aeiouy]/.test(word[word.length - 3])) {
+        syllables += 1;
+      }
+      
+      return syllables || 1;
+    }
+
+    // Markov Chain Class
+    class MarkovChain {
+      constructor() {
+        this.model = {};
+        this.weights = {};
+        this.sentenceStarters = {};
+        this.starterWeight = 0;
+        this.punctuation = ['.', '!', '?'];
+        this.punctuationIgnore = ['"', "'"];
+      }
+
+      train(text) {
+        const words = text.split(/\s+/);
+        const processed = this.preprocessWords(words);
+        
+        for (let i = 0; i < processed.length - 1; i++) {
+          const currWord = processed[i];
+          const nextWord = processed[i + 1];
+          
+          if (this.punctuation.includes(currWord)) {
+            continue;
+          }
+          
+          if (i === 0 || this.punctuation.includes(processed[i - 1])) {
+            this.sentenceStarters[currWord] = (this.sentenceStarters[currWord] || 0) + 1;
+            this.starterWeight += 1;
+          }
+          
+          const normalizedCurr = currWord.toLowerCase();
+          if (!this.model[normalizedCurr]) {
+            this.model[normalizedCurr] = {};
+            this.weights[normalizedCurr] = 0;
+          }
+          
+          this.model[normalizedCurr][nextWord] = (this.model[normalizedCurr][nextWord] || 0) + 1;
+          this.weights[normalizedCurr] += 1;
+        }
+      }
+
+      preprocessWords(words) {
+        const processed = [];
+        
+        for (let word of words) {
+          if (word.length === 0) continue;
+          
+          if (this.punctuationIgnore.includes(word[word.length - 1])) {
+            word = word.slice(0, -1);
+          }
+          
+          if (word.length > 0 && this.punctuation.includes(word[word.length - 1])) {
+            processed.push(word.slice(0, -1));
+            processed.push(word[word.length - 1]);
+            continue;
+          }
+          
+          if (word.length > 0) {
+            processed.push(word);
+          }
+        }
+        
+        return processed;
+      }
+
+      getNextWord(currentWord) {
+        const normalized = currentWord.toLowerCase();
+        if (!this.model[normalized] || this.weights[normalized] === 0) {
+          return null;
+        }
+        
+        const dice = Math.random() * this.weights[normalized];
+        let accumulated = 0;
+        
+        for (const [word, weight] of Object.entries(this.model[normalized])) {
+          accumulated += weight;
+          if (accumulated >= dice) {
+            return word;
+          }
+        }
+        
+        const words = Object.keys(this.model[normalized]);
+        return words[Math.floor(Math.random() * words.length)];
+      }
+
+      getStarterWord() {
+        if (this.starterWeight === 0) {
+          return '';
+        }
+        
+        const dice = Math.random() * this.starterWeight;
+        let accumulated = 0;
+        
+        for (const [word, weight] of Object.entries(this.sentenceStarters)) {
+          accumulated += weight;
+          if (accumulated >= dice) {
+            return word;
+          }
+        }
+        
+        const words = Object.keys(this.sentenceStarters);
+        return words[Math.floor(Math.random() * words.length)];
+      }
+
+      getWordsFittingSyllables(currentWord, syllableBudget) {
+        const normalized = currentWord.toLowerCase();
+        if (!this.model[normalized]) {
+          return [];
+        }
+        
+        const candidates = Object.keys(this.model[normalized])
+          .filter(word => {
+            const count = syllable(word);
+            return count > 0 && count <= syllableBudget;
+          })
+          .sort((a, b) => this.model[normalized][b] - this.model[normalized][a]);
+        
+        return candidates.slice(0, 20);
+      }
+    }
+
+    // Main Component
+    function HaikuGenerator() {
+      const [markov] = useState(() => new MarkovChain());
+      const [corpus, setCorpus] = useState('');
+      const [lines, setLines] = useState(['', '', '']);
+      const [suggestions, setSuggestions] = useState(['', '', '']);
+      const [focusedLine, setFocusedLine] = useState(0);
+      const inputRefs = useRef([]);
+
+      useEffect(() => {
+        if (corpus.trim()) {
+          markov.train(corpus);
+        }
+      }, [corpus, markov]);
+
+      const countSyllables = (text) => {
+        if (!text.trim()) return 0;
+        const words = text.trim().split(/\s+/);
+        return words.reduce((sum, word) => sum + syllable(word), 0);
+      };
+
+      const generateCompletion = useCallback((startText, targetSyllables, maxAttempts = 50) => {
+        if (!startText.trim()) {
+          const starter = markov.getStarterWord();
+          if (!starter) return '';
+          startText = starter;
+        }
+        
+        const words = startText.trim().split(/\s+/);
+        let currentSyllables = countSyllables(startText);
+        let currentWord = words[words.length - 1].toLowerCase();
+        let attempts = 0;
+        
+        while (currentSyllables < targetSyllables && attempts < maxAttempts) {
+          const remainingSyllables = targetSyllables - currentSyllables;
+          const candidates = markov.getWordsFittingSyllables(currentWord, remainingSyllables);
+          
+          if (candidates.length === 0) {
+            break;
+          }
+          
+          const nextWord = candidates[Math.floor(Math.random() * Math.min(5, candidates.length))];
+          const syllablesInWord = syllable(nextWord);
+          
+          if (currentSyllables + syllablesInWord <= targetSyllables) {
+            words.push(nextWord);
+            currentSyllables += syllablesInWord;
+            currentWord = nextWord.toLowerCase();
+          } else {
+            break;
+          }
+          
+          attempts++;
+        }
+        
+        return words.join(' ');
+      }, [markov]);
+
+      // Generate suggestions whenever lines change
+      useEffect(() => {
+        const targets = [5, 7, 5];
+        
+        // Generate a complete haiku suggestion
+        const newSuggestions = [];
+        
+        for (let idx = 0; idx < 3; idx++) {
+          const line = lines[idx];
+          const currentSyls = countSyllables(line);
+          
+          if (currentSyls >= targets[idx]) {
+            // Line is complete, no suggestion needed
+            newSuggestions[idx] = '';
+          } else if (line.trim()) {
+            // User has started typing, complete from their start
+            const fullCompletion = generateCompletion(line, targets[idx]);
+            // Show only the continuation
+            if (fullCompletion.startsWith(line.trim())) {
+              newSuggestions[idx] = fullCompletion.slice(line.trim().length).trimStart();
+            } else {
+              newSuggestions[idx] = fullCompletion;
+            }
+          } else {
+            // Empty line, generate from scratch
+            // Use last word from previous line if available
+            let startWord = '';
+            if (idx > 0 && lines[idx - 1].trim()) {
+              const prevWords = lines[idx - 1].trim().split(/\s+/);
+              startWord = prevWords[prevWords.length - 1];
+            }
+            newSuggestions[idx] = generateCompletion(startWord, targets[idx]);
+          }
+        }
+        
+        setSuggestions(newSuggestions);
+      }, [lines, generateCompletion]);
+
+      const handleLineChange = (lineIndex, value) => {
+        const newLines = [...lines];
+        newLines[lineIndex] = value;
+        setLines(newLines);
+      };
+
+      const handleKeyDown = (lineIndex, e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          if (lineIndex < 2) {
+            setFocusedLine(lineIndex + 1);
+            setTimeout(() => {
+              inputRefs.current[lineIndex + 1]?.focus();
+            }, 0);
+          }
+        } else if (e.key === 'Tab') {
+          e.preventDefault();
+          // Accept suggestion
+          const newLines = [...lines];
+          newLines[lineIndex] = suggestions[lineIndex];
+          setLines(newLines);
+        }
+      };
+
+      const handleCorpusUpload = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const text = event.target?.result;
+            setCorpus(prev => prev + '\n' + text);
+          };
+          reader.readAsText(file);
+        }
+      };
+
+      const getSyllableClass = (current, target) => {
+        if (current === target) return 'complete';
+        if (current > target) return 'over';
+        return '';
+      };
+
+      const targets = [5, 7, 5];
+      const syllableCounts = lines.map(countSyllables);
+
+      return (
+        <div className="container">
+          <h1>Haiku Generator</h1>
+          <p className="subtitle">
+            Type your haiku. Gray text shows AI suggestions. Press Enter for next line, Tab to accept suggestion.
+          </p>
+
+          <div className="corpus-section">
+            <h2>Training Corpus</h2>
+            <input
+              type="file"
+              accept=".txt"
+              onChange={handleCorpusUpload}
+            />
+            <textarea
+              value={corpus}
+              onChange={(e) => setCorpus(e.target.value)}
+              placeholder="Or paste text here to train the model..."
+            />
+          </div>
+
+          <div className="haiku-box">
+            {lines.map((line, idx) => (
+              <div key={idx} className="line-wrapper">
+                <div className="text-layer">
+                  <span className="user-text">{line}</span>
+                  {suggestions[idx] && (
+                    <span className="ghost-text">
+                      {line ? ' ' : ''}{suggestions[idx]}
+                    </span>
+                  )}
+                </div>
+                <input
+                  ref={el => inputRefs.current[idx] = el}
+                  className="line-input"
+                  type="text"
+                  value={line}
+                  onChange={(e) => handleLineChange(idx, e.target.value)}
+                  onKeyDown={(e) => handleKeyDown(idx, e)}
+                  onFocus={() => setFocusedLine(idx)}
+                />
+                <div className={`syllable-info ${getSyllableClass(syllableCounts[idx], targets[idx])}`}>
+                  Line {idx + 1}: {syllableCounts[idx]} / {targets[idx]} syllables
+                </div>
+              </div>
+            ))}
+
+            <div className="instructions">
+              <strong>How to use:</strong>
+              <ul style={{ marginTop: '8px', marginLeft: '20px' }}>
+                <li>Click on a line to start typing</li>
+                <li>Press <strong>Enter</strong> to move to the next line</li>
+                <li>Press <strong>Tab</strong> to accept the gray suggestion</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<HaikuGenerator />, document.getElementById('root'));
+  </script>
+</body>
+</html>
